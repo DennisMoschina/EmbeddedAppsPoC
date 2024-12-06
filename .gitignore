@@ -4,3 +4,11 @@
 
 # build
 /build*/
+/src/microPython/micropython_embed/
+/src/microPython/build-embed/
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode
