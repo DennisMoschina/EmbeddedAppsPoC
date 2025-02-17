@@ -37,9 +37,11 @@ config BT
 	default y
 
 config BOARD_ENABLE_DCDC_APP
+	bool "Enable DCDC for APP"
 	default y
 
 config BOARD_ENABLE_DCDC_NET
+	bool "Enable DCDC for NET"
 	default y
 
 config BOARD_ENABLE_CPUNET

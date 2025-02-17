@@ -36,9 +36,11 @@ config BT_GAP_PERIPHERAL_PREF_PARAMS
 	default n
 
 config BT_ASCS_ASE_SNK_COUNT
+	int "BT ASCS ASE Sink Count"
 	default 1
 
 config BT_ASCS_ASE_SRC_COUNT
+	int "BT ASCS ASE Source Count"
 	default 1 if STREAM_BIDIRECTIONAL
 	default 0 if !STREAM_BIDIRECTIONAL
 
