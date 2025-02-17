@@ -4,10 +4,12 @@
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
 
-#ifndef _NRF5340_AUDIO_COMMON_H_
-#define _NRF5340_AUDIO_COMMON_H_
+#ifndef _ZBUS_COMMON_H_
+#define _ZBUS_COMMON_H_
 
 #include <zephyr/bluetooth/audio/audio.h>
+
+#include "le_audio.h"
 
 #define ZBUS_READ_TIMEOUT_MS	K_MSEC(100)
 #define ZBUS_ADD_OBS_TIMEOUT_MS K_MSEC(200)
@@ -28,8 +30,10 @@ enum le_audio_evt_type {
 	LE_AUDIO_EVT_PRES_DELAY_SET,
 	LE_AUDIO_EVT_STREAMING,
 	LE_AUDIO_EVT_NOT_STREAMING,
+	LE_AUDIO_EVT_STREAM_SENT,
 	LE_AUDIO_EVT_SYNC_LOST,
 	LE_AUDIO_EVT_NO_VALID_CFG,
+	LE_AUDIO_EVT_COORD_SET_DISCOVERED,
 };
 
 struct le_audio_msg {
@@ -37,6 +41,9 @@ struct le_audio_msg {
 	struct bt_conn *conn;
 	struct bt_le_per_adv_sync *pa_sync;
 	enum bt_audio_dir dir;
+	uint8_t set_size;
+	uint8_t const *sirk;
+	struct stream_index idx;
 };
 
 /**
@@ -56,11 +63,14 @@ enum bt_mgmt_evt_type {
 	BT_MGMT_PA_SYNCED,
 	BT_MGMT_PA_SYNC_LOST,
 	BT_MGMT_DISCONNECTED,
+	BT_MGMT_BROADCAST_SINK_DISABLE,
+	BT_MGMT_BROADCAST_CODE_RECEIVED,
 };
 
 struct bt_mgmt_msg {
 	enum bt_mgmt_evt_type event;
 	struct bt_conn *conn;
+	uint8_t index;
 	struct bt_le_ext_adv *ext_adv;
 	struct bt_le_per_adv_sync *pa_sync;
 	uint32_t broadcast_id;
@@ -89,11 +99,4 @@ struct content_control_msg {
 	enum content_control_evt_type event;
 };
 
-/**
- * @brief	Initialize the software modules that are common for all the audio samples.
- *
- * @return	0 if successful, error otherwise.
- */
-int nrf5340_audio_common_init(void);
-
-#endif /* _NRF5340_AUDIO_COMMON_H_ */
+#endif /* _ZBUS_COMMON_H_ */

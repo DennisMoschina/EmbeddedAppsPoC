@@ -9,15 +9,17 @@
 #include <zephyr/bluetooth/audio/audio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/zbus/zbus.h>
+#include <zephyr/sys/byteorder.h>
 
-#include "nrf5340_audio_common.h"
-#include "nrf5340_audio_dk.h"
 #include "broadcast_source.h"
+#include "zbus_common.h"
+#include "nrf5340_audio_dk.h"
 #include "led.h"
 #include "button_assignments.h"
 #include "macros_common.h"
 #include "audio_system.h"
 #include "bt_mgmt.h"
+#include "fw_info_app.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_MAIN_LOG_LEVEL);
@@ -39,10 +41,67 @@ static struct k_thread le_audio_msg_sub_thread_data;
 static k_tid_t button_msg_sub_thread_id;
 static k_tid_t le_audio_msg_sub_thread_id;
 
+struct bt_le_ext_adv *ext_adv;
+
 K_THREAD_STACK_DEFINE(button_msg_sub_thread_stack, CONFIG_BUTTON_MSG_SUB_STACK_SIZE);
 K_THREAD_STACK_DEFINE(le_audio_msg_sub_thread_stack, CONFIG_LE_AUDIO_MSG_SUB_STACK_SIZE);
 
 static enum stream_state strm_state = STATE_PAUSED;
+
+/* Buffer for the UUIDs. */
+#define EXT_ADV_UUID_BUF_SIZE (128)
+NET_BUF_SIMPLE_DEFINE_STATIC(uuid_data, EXT_ADV_UUID_BUF_SIZE);
+NET_BUF_SIMPLE_DEFINE_STATIC(uuid_data2, EXT_ADV_UUID_BUF_SIZE);
+
+/* Buffer for periodic advertising BASE data. */
+NET_BUF_SIMPLE_DEFINE_STATIC(base_data, 128);
+NET_BUF_SIMPLE_DEFINE_STATIC(base_data2, 128);
+
+/* Extended advertising buffer. */
+static struct bt_data ext_adv_buf[CONFIG_BT_ISO_MAX_BIG][CONFIG_EXT_ADV_BUF_MAX];
+
+/* Periodic advertising buffer. */
+static struct bt_data per_adv_buf[CONFIG_BT_ISO_MAX_BIG];
+
+#if (CONFIG_AURACAST)
+/* Total size of the PBA buffer includes the 16-bit UUID, 8-bit features and the
+ * meta data size.
+ */
+#define BROADCAST_SRC_PBA_BUF_SIZE                                                                 \
+	(BROADCAST_SOURCE_PBA_HEADER_SIZE + CONFIG_BT_AUDIO_BROADCAST_PBA_METADATA_SIZE)
+
+/* Number of metadata items that can be assigned. */
+#define BROADCAST_SOURCE_PBA_METADATA_VACANT                                                       \
+	(CONFIG_BT_AUDIO_BROADCAST_PBA_METADATA_SIZE / (sizeof(struct bt_data)))
+
+/* Make sure pba_buf is large enough for a 16bit UUID and meta data
+ * (any addition to pba_buf requires an increase of this value)
+ */
+uint8_t pba_data[CONFIG_BT_ISO_MAX_BIG][BROADCAST_SRC_PBA_BUF_SIZE];
+
+/**
+ * @brief	Broadcast source static extended advertising data.
+ */
+static struct broadcast_source_ext_adv_data ext_adv_data[] = {
+	{.uuid_buf = &uuid_data,
+	 .pba_metadata_vacant_cnt = BROADCAST_SOURCE_PBA_METADATA_VACANT,
+	 .pba_buf = pba_data[0]},
+	{.uuid_buf = &uuid_data2,
+	 .pba_metadata_vacant_cnt = BROADCAST_SOURCE_PBA_METADATA_VACANT,
+	 .pba_buf = pba_data[1]}};
+#else
+/**
+ * @brief	Broadcast source static extended advertising data.
+ */
+static struct broadcast_source_ext_adv_data ext_adv_data[] = {{.uuid_buf = &uuid_data},
+							      {.uuid_buf = &uuid_data2}};
+#endif /* (CONFIG_AURACAST) */
+
+/**
+ * @brief	Broadcast source static periodic advertising data.
+ */
+static struct broadcast_source_per_adv_data per_adv_data[] = {{.base_buf = &base_data},
+							      {.base_buf = &base_data2}};
 
 /* Function for handling all stream state changes */
 static void stream_state_set(enum stream_state stream_state_new)
@@ -78,12 +137,12 @@ static void button_msg_sub_thread(void)
 		switch (msg.button_pin) {
 		case BUTTON_PLAY_PAUSE:
 			if (strm_state == STATE_STREAMING) {
-				ret = broadcast_source_stop();
+				ret = broadcast_source_stop(0);
 				if (ret) {
 					LOG_WRN("Failed to stop broadcaster: %d", ret);
 				}
 			} else if (strm_state == STATE_PAUSED) {
-				ret = broadcast_source_start(NULL);
+				ret = broadcast_source_start(0, ext_adv);
 				if (ret) {
 					LOG_WRN("Failed to start broadcaster: %d", ret);
 				}
@@ -169,6 +228,10 @@ static void le_audio_msg_sub_thread(void)
 
 			break;
 
+		case LE_AUDIO_EVT_STREAM_SENT:
+			/* Nothing to do. */
+			break;
+
 		default:
 			LOG_WRN("Unexpected/unhandled le_audio event: %d", msg.event);
 
@@ -236,7 +299,9 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 	case BT_MGMT_EXT_ADV_WITH_PA_READY:
 		LOG_INF("Ext adv ready");
 
-		ret = broadcast_source_start(msg->ext_adv);
+		ext_adv = msg->ext_adv;
+
+		ret = broadcast_source_start(msg->index, ext_adv);
 		if (ret) {
 			LOG_ERR("Failed to start broadcaster: %d", ret);
 		}
@@ -285,6 +350,125 @@ static int zbus_link_producers_observers(void)
 	return 0;
 }
 
+/*
+ * @brief  The following configures the data for the extended advertising.
+ *         This includes the Broadcast Audio Announcements [BAP 3.7.2.1] and Broadcast_ID
+ *         [BAP 3.7.2.1.1] in the AUX_ADV_IND Extended Announcements.
+ *
+ * @param  big_index         Index of the Broadcast Isochronous Group (BIG) to get
+ *                           advertising data for.
+ * @param  ext_adv_data      Pointer to the extended advertising buffers.
+ * @param  ext_adv_buf       Pointer to the bt_data used for extended advertising.
+ * @param  ext_adv_buf_size  Size of @p ext_adv_buf.
+ * @param  ext_adv_count     Pointer to the number of elements added to @p adv_buf.
+ *
+ * @return  0 for success, error otherwise.
+ */
+static int ext_adv_populate(uint8_t big_index, struct broadcast_source_ext_adv_data *ext_adv_data,
+			    struct bt_data *ext_adv_buf, size_t ext_adv_buf_size,
+			    size_t *ext_adv_count)
+{
+	int ret;
+	size_t ext_adv_buf_cnt = 0;
+
+	if (IS_ENABLED(CONFIG_BT_AUDIO_USE_BROADCAST_NAME_ALT)) {
+		if (sizeof(CONFIG_BT_AUDIO_BROADCAST_NAME_ALT) >
+		    ARRAY_SIZE(ext_adv_data->brdcst_name_buf)) {
+			LOG_ERR("CONFIG_BT_AUDIO_BROADCAST_NAME_ALT is too long");
+			return -EINVAL;
+		}
+
+		size_t brdcst_name_size = sizeof(CONFIG_BT_AUDIO_BROADCAST_NAME_ALT) - 1;
+
+		memcpy(ext_adv_data->brdcst_name_buf, CONFIG_BT_AUDIO_BROADCAST_NAME_ALT,
+		       brdcst_name_size);
+	} else {
+		if (sizeof(CONFIG_BT_AUDIO_BROADCAST_NAME) >
+		    ARRAY_SIZE(ext_adv_data->brdcst_name_buf)) {
+			LOG_ERR("CONFIG_BT_AUDIO_BROADCAST_NAME is too long");
+			return -EINVAL;
+		}
+
+		size_t brdcst_name_size = sizeof(CONFIG_BT_AUDIO_BROADCAST_NAME) - 1;
+
+		memcpy(ext_adv_data->brdcst_name_buf, CONFIG_BT_AUDIO_BROADCAST_NAME,
+		       brdcst_name_size);
+	}
+
+	ext_adv_buf[ext_adv_buf_cnt].type = BT_DATA_UUID16_ALL;
+	ext_adv_buf[ext_adv_buf_cnt].data = ext_adv_data->uuid_buf->data;
+	ext_adv_buf_cnt++;
+
+	ret = bt_mgmt_manufacturer_uuid_populate(ext_adv_data->uuid_buf,
+						 CONFIG_BT_DEVICE_MANUFACTURER_ID);
+	if (ret) {
+		LOG_ERR("Failed to add adv data with manufacturer ID: %d", ret);
+		return ret;
+	}
+
+	bool fixed_id = !IS_ENABLED(CONFIG_BT_AUDIO_USE_BROADCAST_ID_RANDOM);
+
+	uint32_t broadcast_id = CONFIG_BT_AUDIO_BROADCAST_ID_FIXED;
+
+	ret = broadcast_source_ext_adv_populate(big_index, fixed_id, broadcast_id, ext_adv_data,
+						&ext_adv_buf[ext_adv_buf_cnt],
+						ext_adv_buf_size - ext_adv_buf_cnt);
+	if (ret < 0) {
+		LOG_ERR("Failed to add ext adv data for broadcast source: %d", ret);
+		return ret;
+	}
+
+	ext_adv_buf_cnt += ret;
+
+	/* Add the number of UUIDs */
+	ext_adv_buf[0].data_len = ext_adv_data->uuid_buf->len;
+
+	LOG_DBG("Size of adv data: %d, num_elements: %d", sizeof(struct bt_data) * ext_adv_buf_cnt,
+		ext_adv_buf_cnt);
+
+	*ext_adv_count = ext_adv_buf_cnt;
+
+	return 0;
+}
+
+/*
+ * @brief  The following configures the data for the periodic advertising.
+ *         This includes the Basic Audio Announcement, including the
+ *         BASE [BAP 3.7.2.2] and BIGInfo.
+ *
+ * @param  big_index         Index of the Broadcast Isochronous Group (BIG) to get
+ *                           advertising data for.
+ * @param  pre_adv_data      Pointer to the periodic advertising buffers.
+ * @param  per_adv_buf       Pointer to the bt_data used for periodic advertising.
+ * @param  per_adv_buf_size  Size of @p ext_adv_buf.
+ * @param  per_adv_count     Pointer to the number of elements added to @p adv_buf.
+ *
+ * @return  0 for success, error otherwise.
+ */
+static int per_adv_populate(uint8_t big_index, struct broadcast_source_per_adv_data *pre_adv_data,
+			    struct bt_data *per_adv_buf, size_t per_adv_buf_size,
+			    size_t *per_adv_count)
+{
+	int ret;
+	size_t per_adv_buf_cnt = 0;
+
+	ret = broadcast_source_per_adv_populate(big_index, pre_adv_data, per_adv_buf,
+						per_adv_buf_size - per_adv_buf_cnt);
+	if (ret < 0) {
+		LOG_ERR("Failed to add per adv data for broadcast source: %d", ret);
+		return ret;
+	}
+
+	per_adv_buf_cnt += ret;
+
+	LOG_DBG("Size of per adv data: %d, num_elements: %d",
+		sizeof(struct bt_data) * per_adv_buf_cnt, per_adv_buf_cnt);
+
+	*per_adv_count = per_adv_buf_cnt;
+
+	return 0;
+}
+
 uint8_t stream_state_get(void)
 {
 	return strm_state;
@@ -298,7 +482,7 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 	struct le_audio_encoded_audio enc_audio = {.data = data, .size = size, .num_ch = num_ch};
 
 	if (strm_state == STATE_STREAMING) {
-		ret = broadcast_source_send(enc_audio);
+		ret = broadcast_source_send(0, 0, enc_audio);
 
 		if (ret != 0 && ret != prev_ret) {
 			if (ret == -ECANCELED) {
@@ -312,22 +496,79 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 	}
 }
 
+#if CONFIG_CUSTOM_BROADCASTER
+/* Example of how to create a custom broadcaster */
+/**
+ * Remember to increase:
+ * CONFIG_BT_BAP_BROADCAST_SRC_SUBGROUP_COUNT
+ * CONFIG_BT_CTLR_ADV_ISO_STREAM_COUNT (set in hci_ipc.conf)
+ * CONFIG_BT_ISO_TX_BUF_COUNT
+ * CONFIG_BT_BAP_BROADCAST_SRC_STREAM_COUNT
+ * CONFIG_BT_ISO_MAX_CHAN
+ */
+#error Feature is incomplete and should only be used as a guideline for now
+static struct bt_bap_lc3_preset lc3_preset_48 = BT_BAP_LC3_BROADCAST_PRESET_48_4_1(
+	BT_AUDIO_LOCATION_FRONT_LEFT | BT_AUDIO_LOCATION_FRONT_RIGHT, BT_AUDIO_CONTEXT_TYPE_MEDIA);
+
+static void broadcast_create(struct broadcast_source_big *broadcast_param)
+{
+	static enum bt_audio_location location[2] = {BT_AUDIO_LOCATION_FRONT_LEFT,
+						     BT_AUDIO_LOCATION_FRONT_RIGHT};
+	static struct subgroup_config subgroups[2];
+
+	subgroups[0].group_lc3_preset = lc3_preset_48;
+	subgroups[0].num_bises = 2;
+	subgroups[0].context = BT_AUDIO_CONTEXT_TYPE_MEDIA;
+	subgroups[0].location = location;
+
+	subgroups[1].group_lc3_preset = lc3_preset_48;
+	subgroups[1].num_bises = 2;
+	subgroups[1].context = BT_AUDIO_CONTEXT_TYPE_MEDIA;
+	subgroups[1].location = location;
+
+	broadcast_param->packing = BT_ISO_PACKING_INTERLEAVED;
+
+	broadcast_param->encryption = false;
+
+	bt_audio_codec_cfg_meta_set_bcast_audio_immediate_rend_flag(
+		&subgroups[0].group_lc3_preset.codec_cfg);
+	bt_audio_codec_cfg_meta_set_bcast_audio_immediate_rend_flag(
+		&subgroups[1].group_lc3_preset.codec_cfg);
+
+	uint8_t spanish_src[3] = "spa";
+	uint8_t english_src[3] = "eng";
+
+	bt_audio_codec_cfg_meta_set_stream_lang(&subgroups[0].group_lc3_preset.codec_cfg,
+						(uint32_t)sys_get_le24(english_src));
+	bt_audio_codec_cfg_meta_set_stream_lang(&subgroups[1].group_lc3_preset.codec_cfg,
+						(uint32_t)sys_get_le24(spanish_src));
+
+	broadcast_param->subgroups = subgroups;
+	broadcast_param->num_subgroups = 2;
+}
+#endif /* CONFIG_CUSTOM_BROADCASTER */
+
 int main(void)
 {
 	int ret;
-	static const struct bt_data *ext_adv;
-	static const struct bt_data *per_adv;
+	static struct broadcast_source_big broadcast_param;
 
-	LOG_DBG("nRF5340 APP core started");
+	LOG_DBG("Main started");
+
+	size_t ext_adv_buf_cnt = 0;
+	size_t per_adv_buf_cnt = 0;
 
 	ret = nrf5340_audio_dk_init();
 	ERR_CHK(ret);
 
-	ret = nrf5340_audio_common_init();
+	ret = fw_info_app_print();
 	ERR_CHK(ret);
 
-	size_t ext_adv_size = 0;
-	size_t per_adv_size = 0;
+	ret = bt_mgmt_init();
+	ERR_CHK(ret);
+
+	ret = audio_system_init();
+	ERR_CHK(ret);
 
 	ret = zbus_subscribers_create();
 	ERR_CHK_MSG(ret, "Failed to create zbus subscriber threads");
@@ -335,18 +576,31 @@ int main(void)
 	ret = zbus_link_producers_observers();
 	ERR_CHK_MSG(ret, "Failed to link zbus producers and observers");
 
-	ret = broadcast_source_enable();
-	ERR_CHK_MSG(ret, "Failed to enable broadcaster");
+	broadcast_source_default_create(&broadcast_param);
+
+	/* Only one BIG supported at the moment */
+	ret = broadcast_source_enable(&broadcast_param, 0);
+	ERR_CHK_MSG(ret, "Failed to enable broadcaster(s)");
 
 	ret = audio_system_config_set(
 		bt_audio_codec_cfg_freq_to_freq_hz(CONFIG_BT_AUDIO_PREF_SAMPLE_RATE_VALUE),
 		CONFIG_BT_AUDIO_BITRATE_BROADCAST_SRC, VALUE_NOT_SET);
 	ERR_CHK_MSG(ret, "Failed to set sample- and bitrate");
 
-	broadcast_source_adv_get(&ext_adv, &ext_adv_size, &per_adv, &per_adv_size);
+	/* Get advertising set for BIG0 */
+	ret = ext_adv_populate(0, &ext_adv_data[0], ext_adv_buf[0], ARRAY_SIZE(ext_adv_buf[0]),
+			       &ext_adv_buf_cnt);
+	ERR_CHK(ret);
 
-	ret = bt_mgmt_adv_start(ext_adv, ext_adv_size, per_adv, per_adv_size, false);
-	ERR_CHK_MSG(ret, "Failed to start advertiser");
+	ret = per_adv_populate(0, &per_adv_data[0], &per_adv_buf[0], 1, &per_adv_buf_cnt);
+	ERR_CHK(ret);
+
+	/* Start broadcaster */
+	ret = bt_mgmt_adv_start(0, ext_adv_buf[0], ext_adv_buf_cnt, &per_adv_buf[0],
+				per_adv_buf_cnt, false);
+	ERR_CHK_MSG(ret, "Failed to start first advertiser");
+
+	LOG_INF("Broadcast source: %s started", CONFIG_BT_AUDIO_BROADCAST_NAME);
 
 	return 0;
 }

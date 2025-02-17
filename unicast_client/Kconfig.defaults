@@ -26,7 +26,16 @@ config BT_GATT_DYNAMIC_DB
 config BT_ISO_MAX_CHAN
 	default 4
 
+config BT_BAP_UNICAST
+	default y
+
 config BT_BAP_UNICAST_CLIENT
+	default y
+
+config BT_CAP_INITIATOR
+	default y
+
+config BT_CSIP_SET_COORDINATOR
 	default y
 
 config BT_ISO_TX_BUF_COUNT

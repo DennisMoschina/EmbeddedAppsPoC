@@ -8,7 +8,8 @@
 
 #include <zephyr/zbus/zbus.h>
 
-#include "nrf5340_audio_common.h"
+#include "unicast_client.h"
+#include "zbus_common.h"
 #include "nrf5340_audio_dk.h"
 #include "led.h"
 #include "button_assignments.h"
@@ -19,8 +20,8 @@
 #include "bt_mgmt.h"
 #include "bt_rendering_and_capture.h"
 #include "bt_content_ctrl.h"
-#include "unicast_client.h"
 #include "le_audio_rx.h"
+#include "fw_info_app.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_MAIN_LOG_LEVEL);
@@ -75,11 +76,11 @@ static void content_control_msg_sub_thread(void)
 
 		switch (msg.event) {
 		case MEDIA_START:
-			unicast_client_start(BT_AUDIO_DIR_SINK);
+			unicast_client_start(0);
 			break;
 
 		case MEDIA_STOP:
-			unicast_client_stop(BT_AUDIO_DIR_SINK);
+			unicast_client_stop(0);
 			break;
 
 		default:
@@ -268,6 +269,34 @@ static void le_audio_msg_sub_thread(void)
 			break;
 
 		case LE_AUDIO_EVT_CONFIG_RECEIVED:
+			struct bt_conn_info conn_info;
+			uint16_t interval = 0;
+
+			ret = bt_conn_get_info(msg.conn, &conn_info);
+			if (ret) {
+				LOG_ERR("Failed to get conn info");
+			} else {
+				interval = conn_info.le.interval;
+			}
+
+			/* Only update conn param once */
+			if (((IS_ENABLED(CONFIG_BT_AUDIO_TX) && msg.dir == BT_AUDIO_DIR_SINK) ||
+			     (!IS_ENABLED(CONFIG_BT_AUDIO_TX) && msg.dir == BT_AUDIO_DIR_SOURCE)) &&
+			    interval != CONFIG_BLE_ACL_CONN_INTERVAL_SLOW) {
+				struct bt_le_conn_param param;
+
+				/* Set the ACL interval up to allow more time for ISO packets */
+				param.interval_min = CONFIG_BLE_ACL_CONN_INTERVAL_SLOW;
+				param.interval_max = CONFIG_BLE_ACL_CONN_INTERVAL_SLOW;
+				param.latency = CONFIG_BLE_ACL_SLAVE_LATENCY;
+				param.timeout = CONFIG_BLE_ACL_SUP_TIMEOUT;
+
+				ret = bt_conn_le_param_update(msg.conn, &param);
+				if (ret) {
+					LOG_WRN("Failed to update conn parameters: %d", ret);
+				}
+			}
+
 			LOG_DBG("LE audio config received");
 
 			ret = unicast_client_config_get(msg.conn, msg.dir, &bitrate_bps,
@@ -292,6 +321,41 @@ static void le_audio_msg_sub_thread(void)
 
 			break;
 
+		case LE_AUDIO_EVT_COORD_SET_DISCOVERED:
+			uint8_t num_conn = 0;
+			uint8_t num_filled = 0;
+
+			bt_mgmt_num_conn_get(&num_conn);
+
+			if (msg.set_size > 0) {
+				/* Check how many active connections we have for the given set */
+				LOG_DBG("Setting SIRK");
+				bt_mgmt_scan_sirk_set(msg.sirk);
+				bt_mgmt_set_size_filled_get(&num_filled);
+
+				LOG_INF("Set members found: %d of %d", num_filled, msg.set_size);
+
+				if (num_filled == msg.set_size) {
+					/* All devices in set found, clear SIRK before scanning */
+					bt_mgmt_scan_sirk_set(NULL);
+				}
+			}
+
+			if (num_conn < CONFIG_BT_MAX_CONN) {
+				/* Room for more connections, start scanning again */
+				ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_CONN, NULL,
+							 BRDCAST_ID_NOT_USED);
+				if (ret) {
+					LOG_ERR("Failed to resume scanning: %d", ret);
+				}
+			}
+
+			break;
+
+		case LE_AUDIO_EVT_STREAM_SENT:
+			/* Nothing to do. */
+			break;
+
 		default:
 			LOG_WRN("Unexpected/unhandled le_audio event: %d", msg.event);
 			break;
@@ -313,12 +377,16 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 {
 	int ret;
 	const struct bt_mgmt_msg *msg;
+	uint8_t num_conn = 0;
 
 	msg = zbus_chan_const_msg(chan);
+	bt_mgmt_num_conn_get(&num_conn);
 
 	switch (msg->event) {
 	case BT_MGMT_CONNECTED:
-		LOG_INF("Device connected");
+		/* NOTE: The string below is used by the Nordic CI system */
+		LOG_INF("Connection event. Num connections: %u", num_conn);
+
 		break;
 
 	case BT_MGMT_SECURITY_CHANGED:
@@ -342,7 +410,8 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 		break;
 
 	case BT_MGMT_DISCONNECTED:
-		LOG_INF("Device disconnected");
+		/* NOTE: The string below is used by the Nordic CI system */
+		LOG_INF("Disconnection event. Num connections: %u", num_conn);
 
 		unicast_client_conn_disconnected(msg->conn);
 		break;
@@ -453,7 +522,7 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 	struct le_audio_encoded_audio enc_audio = {.data = data, .size = size, .num_ch = num_ch};
 
 	if (strm_state == STATE_STREAMING) {
-		ret = unicast_client_send(enc_audio);
+		ret = unicast_client_send(0, enc_audio);
 
 		if (ret != 0 && ret != prev_ret) {
 			if (ret == -ECANCELED) {
@@ -471,12 +540,18 @@ int main(void)
 {
 	int ret;
 
-	LOG_DBG("nRF5340 APP core started");
+	LOG_DBG("Main started");
 
 	ret = nrf5340_audio_dk_init();
 	ERR_CHK(ret);
 
-	ret = nrf5340_audio_common_init();
+	ret = fw_info_app_print();
+	ERR_CHK(ret);
+
+	ret = bt_mgmt_init();
+	ERR_CHK(ret);
+
+	ret = audio_system_init();
 	ERR_CHK(ret);
 
 	ret = zbus_subscribers_create();
@@ -494,7 +569,7 @@ int main(void)
 	ret = bt_content_ctrl_init();
 	ERR_CHK(ret);
 
-	ret = unicast_client_enable(le_audio_rx_data_handler);
+	ret = unicast_client_enable(0, le_audio_rx_data_handler);
 	ERR_CHK(ret);
 
 	ret = bt_mgmt_scan_start(0, 0, BT_MGMT_SCAN_TYPE_CONN, CONFIG_BT_DEVICE_NAME,

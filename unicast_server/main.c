@@ -8,7 +8,8 @@
 
 #include <zephyr/zbus/zbus.h>
 
-#include "nrf5340_audio_common.h"
+#include "unicast_server.h"
+#include "zbus_common.h"
 #include "nrf5340_audio_dk.h"
 #include "led.h"
 #include "button_assignments.h"
@@ -20,11 +21,9 @@
 #include "bt_rendering_and_capture.h"
 #include "audio_datapath.h"
 #include "bt_content_ctrl.h"
-#include "unicast_server.h"
 #include "le_audio.h"
 #include "le_audio_rx.h"
-
-#include "microPython.h"
+#include "fw_info_app.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_MAIN_LOG_LEVEL);
@@ -278,6 +277,10 @@ static void le_audio_msg_sub_thread(void)
 
 			break;
 
+		case LE_AUDIO_EVT_STREAM_SENT:
+			/* Nothing to do. */
+			break;
+
 		default:
 			LOG_WRN("Unexpected/unhandled le_audio event: %d", msg.event);
 
@@ -332,17 +335,21 @@ static void bt_mgmt_evt_handler(const struct zbus_channel *chan)
 {
 	int ret;
 	const struct bt_mgmt_msg *msg;
+	uint8_t num_conn = 0;
 
 	msg = zbus_chan_const_msg(chan);
+	bt_mgmt_num_conn_get(&num_conn);
 
 	switch (msg->event) {
 	case BT_MGMT_CONNECTED:
-		LOG_INF("Connected");
+		/* NOTE: The string below is used by the Nordic CI system */
+		LOG_INF("Connection event. Num connections: %u", num_conn);
 
 		break;
 
 	case BT_MGMT_DISCONNECTED:
-		LOG_INF("Disconnected");
+		/* NOTE: The string below is used by the Nordic CI system */
+		LOG_INF("Disconnection event. Num connections: %u", num_conn);
 
 		ret = bt_content_ctrl_conn_disconnected(msg->conn);
 		if (ret) {
@@ -412,6 +419,18 @@ static int zbus_link_producers_observers(void)
 	return 0;
 }
 
+/*
+ * @brief  The following configures the data for the extended advertising. This includes the
+ *         Audio Stream Control Service requirements [BAP 3.7.2.1.1] in the AUX_ADV_IND Extended
+ *         Announcements.
+ *
+ * @param  ext_adv_buf       Pointer to the bt_data used for extended advertising.
+ * @param  ext_adv_buf_size  Size of @p ext_adv_buf.
+ * @param  ext_adv_count     Pointer to the number of elements added to @p adv_buf.
+ *
+ * @return  0 for success, error otherwise.
+ */
+
 static int ext_adv_populate(struct bt_data *ext_adv_buf, size_t ext_adv_buf_size,
 			    size_t *ext_adv_count)
 {
@@ -421,7 +440,6 @@ static int ext_adv_populate(struct bt_data *ext_adv_buf, size_t ext_adv_buf_size
 	NET_BUF_SIMPLE_DEFINE_STATIC(uuid_buf, CONFIG_EXT_ADV_UUID_BUF_MAX);
 
 	ext_adv_buf[ext_adv_buf_cnt].type = BT_DATA_UUID16_SOME;
-	ext_adv_buf[ext_adv_buf_cnt].data_len = 0;
 	ext_adv_buf[ext_adv_buf_cnt].data = uuid_buf.data;
 	ext_adv_buf_cnt++;
 
@@ -500,14 +518,20 @@ int main(void)
 	enum audio_channel channel;
 	static struct bt_data ext_adv_buf[CONFIG_EXT_ADV_BUF_MAX];
 
-	LOG_DBG("nRF5340 APP core started");
+	LOG_DBG("Main started");
 
 	size_t ext_adv_buf_cnt = 0;
 
 	ret = nrf5340_audio_dk_init();
 	ERR_CHK(ret);
 
-	ret = nrf5340_audio_common_init();
+	ret = fw_info_app_print();
+	ERR_CHK(ret);
+
+	ret = bt_mgmt_init();
+	ERR_CHK(ret);
+
+	ret = audio_system_init();
 	ERR_CHK(ret);
 
 	ret = zbus_subscribers_create();
@@ -539,12 +563,8 @@ int main(void)
 	ret = ext_adv_populate(ext_adv_buf, ARRAY_SIZE(ext_adv_buf), &ext_adv_buf_cnt);
 	ERR_CHK(ret);
 
-	ret = bt_mgmt_adv_start(ext_adv_buf, ext_adv_buf_cnt, NULL, 0, true);
+	ret = bt_mgmt_adv_start(0, ext_adv_buf, ext_adv_buf_cnt, NULL, 0, true);
 	ERR_CHK(ret);
-
-	init_micropython();
-	// exec_micropython(example);
-	// deinit_micropython();
 
 	return 0;
 }
