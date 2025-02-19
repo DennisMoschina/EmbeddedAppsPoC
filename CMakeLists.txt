@@ -6,27 +6,6 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
-if(CONFIG_AUDIO_DFU EQUAL 1)
-    list(APPEND mcuboot_OVERLAY_CONFIG
-        "${CMAKE_CURRENT_LIST_DIR}/dfu/conf/overlay-mcuboot.conf"
-        "\\\${ZEPHYR_NRF_MODULE_DIR}/subsys/partition_manager/partition_manager_enabled.conf"
-    )
-endif()
-
-if(CONFIG_AUDIO_DFU EQUAL 2)
-    list(APPEND mcuboot_OVERLAY_CONFIG
-        "${CMAKE_CURRENT_LIST_DIR}/dfu/conf/overlay-mcuboot_external_flash.conf"
-        "\\\${ZEPHYR_NRF_MODULE_DIR}/subsys/partition_manager/partition_manager_enabled.conf"
-    )
-    list(APPEND mcuboot_DTC_OVERLAY_FILE
-        "${CMAKE_CURRENT_LIST_DIR}/dfu/conf/overlay-dfu_external_flash.overlay"
-        "\\\${ZEPHYR_NRF_MODULE_DIR}/modules/mcuboot/flash_sim.overlay"
-    )
-    set(DTC_OVERLAY_FILE ${CMAKE_CURRENT_LIST_DIR}/dfu/conf/overlay-dfu_external_flash.overlay)
-    set(mcuboot_PM_STATIC_YML_FILE ${CMAKE_CURRENT_LIST_DIR}/dfu/conf/pm_dfu_external_flash.yml)
-    set(PM_STATIC_YML_FILE ${CMAKE_CURRENT_LIST_DIR}/dfu/conf/pm_dfu_external_flash.yml)
-endif()
-
 # Flag which defines whether application is compiled as gateway/dongle or headset
 add_compile_definitions(HEADSET=1)
 add_compile_definitions(GATEWAY=2)
@@ -44,7 +23,6 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/src/utils/fw_info_app.c.in"
 
 # Target sources below are specific to the nRF5340 Audio DK HW
 target_sources(app PRIVATE
-    src/nrf5340_audio_common.c
     ${CMAKE_BINARY_DIR}/fw_info_app.c
     )
 
