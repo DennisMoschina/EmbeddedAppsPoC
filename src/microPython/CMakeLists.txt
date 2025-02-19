@@ -115,7 +115,6 @@ add_dependencies(${MICROPY_TARGET} zephyr_generated_headers)
 include(${MICROPY_DIR}/py/mkrules.cmake)
 
 target_sources(app PRIVATE
-    src/zephyr_start.c
     src/zephyr_getchar.c
 )
 

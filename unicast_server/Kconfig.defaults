@@ -41,12 +41,13 @@ config BT_DEVICE_APPEARANCE
 config BT_GAP_PERIPHERAL_PREF_PARAMS
 	default n
 
-config BT_ASCS_ASE_SNK_COUNT
-	int "BT ASCS ASE Sink Count"
+config BT_ASCS
+	default y
+
+config BT_ASCS_MAX_ASE_SNK_COUNT
 	default 1
 
-config BT_ASCS_ASE_SRC_COUNT
-	int "BT ASCS ASE Source Count"
+config BT_ASCS_MAX_ASE_SRC_COUNT
 	default 1 if STREAM_BIDIRECTIONAL
 	default 0 if !STREAM_BIDIRECTIONAL
 

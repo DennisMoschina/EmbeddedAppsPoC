@@ -33,6 +33,7 @@
 
 #ifdef CONFIG_DISK_ACCESS
 #include <zephyr/storage/disk_access.h>
+#include <extmod/vfs.h>
 #endif
 
 #ifdef CONFIG_FLASH_MAP

@@ -569,8 +569,6 @@ int main(void)
 	ERR_CHK(ret);
 
 	init_micropython();
-	// exec_micropython(example);
-	// deinit_micropython();
 
 	return 0;
 }

@@ -16,6 +16,8 @@
 #include "shared/readline/readline.h"
 #include "extmod/modbluetooth.h"
 
+#include "src/zephyr_getchar.h"
+
 #include "modzephyr.h"
 
 #if MICROPY_PY_MACHINE
@@ -58,6 +60,12 @@ static void vfs_init(void) {
 int real_main(void);
 
 void init_micropython() {
+    #ifdef CONFIG_CONSOLE_SUBSYS
+    mp_console_init();
+    #else
+    zephyr_getchar_init();
+    #endif
+
     real_main();
     LOG_INF("MicroPython initialized");
 }
