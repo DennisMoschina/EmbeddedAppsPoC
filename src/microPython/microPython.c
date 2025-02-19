@@ -16,6 +16,16 @@
 #include "shared/readline/readline.h"
 #include "extmod/modbluetooth.h"
 
+#include "modzephyr.h"
+
+#if MICROPY_PY_MACHINE
+#include "modmachine.h"
+#endif
+
+#if MICROPY_VFS
+#include "extmod/vfs.h"
+#endif
+
 LOG_MODULE_REGISTER(microPython, CONFIG_MAIN_LOG_LEVEL);
 
 static char heap[MICROPY_HEAP_SIZE];
@@ -95,7 +105,7 @@ soft_reset:
         }
     }
 
-    printf("soft reboot\n");
+    LOG_INF("soft reboot\n");
 
     #if MICROPY_PY_BLUETOOTH
     mp_bluetooth_deinit();
