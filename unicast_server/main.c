@@ -25,6 +25,8 @@
 #include "le_audio_rx.h"
 #include "fw_info_app.h"
 
+#include "microPython.h"
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_MAIN_LOG_LEVEL);
 
@@ -565,6 +567,8 @@ int main(void)
 
 	ret = bt_mgmt_adv_start(0, ext_adv_buf, ext_adv_buf_cnt, NULL, 0, true);
 	ERR_CHK(ret);
+
+	init_micropython();
 
 	return 0;
 }

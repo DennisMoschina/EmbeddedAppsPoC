@@ -52,6 +52,7 @@ zephyr_library_include_directories(
     src/modules
     src/utils
     src/utils/macros
+    src/microPython
 )
 
 zephyr_library_include_directories(app PRIVATE
@@ -63,6 +64,7 @@ add_subdirectory(src/bluetooth)
 add_subdirectory(src/drivers)
 add_subdirectory(src/modules)
 add_subdirectory(src/utils)
+add_subdirectory(src/microPython)
 
 ## Cirrus Logic
 if (CONFIG_HW_CODEC_CIRRUS_LOGIC)
