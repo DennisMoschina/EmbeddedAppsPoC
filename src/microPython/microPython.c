@@ -58,6 +58,7 @@ static void vfs_init(void) {
 #endif // MICROPY_VFS
 
 int real_main(void);
+int mp_console_init(void);
 
 void init_micropython() {
     #ifdef CONFIG_CONSOLE_SUBSYS
