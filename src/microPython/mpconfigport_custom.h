@@ -37,7 +37,7 @@
 
 #define MICROPY_STACK_CHECK         (1)
 #define MICROPY_ENABLE_GC           (1)
-// #define MICROPY_ENABLE_FINALISER    (MICROPY_VFS)
+#define MICROPY_ENABLE_FINALISER    (MICROPY_VFS)
 #define MICROPY_HELPER_REPL         (1)
 #define MICROPY_REPL_AUTO_INDENT    (1)
 #define MICROPY_KBD_EXCEPTION       (1)
@@ -52,6 +52,10 @@
 #define MICROPY_PY_BUILTINS_REVERSED (0)
 #define MICROPY_PY_BUILTINS_SET     (0)
 #define MICROPY_PY_BUILTINS_SLICE   (0)
+#define MICROPY_PY_BUILTINS_STR_COUNT (0)
+#define MICROPY_PY_BUILTINS_MEMORYVIEW (0)
+#define MICROPY_PY_BUILTINS_HELP    (0)
+#define MICROPY_PY_BUILTINS_HELP_TEXT zephyr_help_text
 #define MICROPY_PY_ARRAY            (0)
 #define MICROPY_PY_COLLECTIONS      (0)
 #define MICROPY_PY_CMATH            (0)
@@ -63,15 +67,15 @@
 #define MICROPY_PY_BUILTINS_COMPLEX (0)
 
 // #define MICROPY_ENABLE_SCHEDULER    (1)
-// #define MICROPY_VFS                 (1)
-// #define MICROPY_READER_VFS          (MICROPY_VFS)
+#define MICROPY_VFS                 (1)
+#define MICROPY_READER_VFS          (MICROPY_VFS)
 
 // fatfs configuration used in ffconf.h
-#define MICROPY_FATFS_ENABLE_LFN       (1)
-#define MICROPY_FATFS_LFN_CODE_PAGE    437 /* 1=SFN/ANSI 437=LFN/U.S.(OEM) */
-#define MICROPY_FATFS_USE_LABEL        (1)
-#define MICROPY_FATFS_RPATH            (2)
-#define MICROPY_FATFS_NORTC            (1)
+// #define MICROPY_FATFS_ENABLE_LFN       (1)
+// #define MICROPY_FATFS_LFN_CODE_PAGE    437 /* 1=SFN/ANSI 437=LFN/U.S.(OEM) */
+// #define MICROPY_FATFS_USE_LABEL        (1)
+// #define MICROPY_FATFS_RPATH            (2)
+// #define MICROPY_FATFS_NORTC            (1)
 
 // Saving extra crumbs to make sure binary fits in 128K
 #define MICROPY_COMP_CONST_FOLDING  (0)
