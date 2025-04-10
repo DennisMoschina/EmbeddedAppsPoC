@@ -52,7 +52,7 @@ zephyr_library_include_directories(
     src/modules
     src/utils
     src/utils/macros
-    src/microPython
+    # src/microPython
 )
 
 zephyr_library_include_directories(app PRIVATE
@@ -64,7 +64,33 @@ add_subdirectory(src/bluetooth)
 add_subdirectory(src/drivers)
 add_subdirectory(src/modules)
 add_subdirectory(src/utils)
-add_subdirectory(src/microPython)
+# add_subdirectory(src/microPython)
+
+# MicroPython LLEXT
+# add_llext_target(micropython_ext
+#     OUTPUT ${PROJECT_BINARY_DIR}/micropython_ext.llext 
+#     SOURCES $<TARGET_OBJECTS:micropython_objects>
+# )
+
+# llext hello world
+add_llext_target(hello_world
+    OUTPUT ${PROJECT_BINARY_DIR}/hello_world.llext 
+    SOURCES src/llext_hello_world/hello_world.c
+)
+# Create an intermediate target to generate the .inc file before build starts
+add_custom_command(
+    OUTPUT ${PROJECT_BINARY_DIR}/hello_world_ext.inc
+    COMMAND xxd -i -n hello_world_llext ${PROJECT_BINARY_DIR}/hello_world.llext | sed 's/^unsigned char /const unsigned char /' > ${PROJECT_BINARY_DIR}/hello_world_ext.inc
+    DEPENDS hello_world
+    COMMENT "Generating hello_world_ext.inc with clean symbol name"
+)
+add_custom_target(hello_world_blob_inc
+    DEPENDS ${PROJECT_BINARY_DIR}/hello_world_ext.inc
+)
+
+add_dependencies(app hello_world_blob_inc)
+
+target_include_directories(app PRIVATE ${PROJECT_BINARY_DIR})
 
 ## Cirrus Logic
 if (CONFIG_HW_CODEC_CIRRUS_LOGIC)

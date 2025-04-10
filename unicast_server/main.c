@@ -25,7 +25,9 @@
 #include "le_audio_rx.h"
 #include "fw_info_app.h"
 
-#include "microPython.h"
+// #include "microPython.h"
+#include "zephyr/llext/buf_loader.h"
+#include "hello_world_ext.inc"  // defines: unsigned char hello_world_llext[]; unsigned int hello_world_llext_len;
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_MAIN_LOG_LEVEL);
@@ -513,6 +515,46 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 	}
 }
 
+void load_and_call_hello_world(void) {
+    struct llext *ext;
+    const struct llext_symbol *sym;
+    void (*hello_fn)(void);
+
+    // Use buffer loader to read from embedded array
+    struct llext_buf_loader loader = LLEXT_BUF_LOADER(
+        hello_world_llext, hello_world_llext_len
+    );
+
+    // Load extension from memory
+    int ret = llext_load(&loader.loader, "hello_world", &ext, NULL);
+    if (ret != 0) {
+        printk("Failed to load extension: %d\n", ret);
+        return;
+    }
+
+	LOG_DBG("loaded extension");
+
+    // (Optional) Bring up static constructors or globals
+    llext_bringup(ext);
+
+	LOG_DBG("Brought up extension");
+
+	llext_call_fn(ext, "hello_world");
+
+    // // Find the exported symbol by name
+    hello_fn = llext_find_sym(&ext->exp_tab, "hello_world");
+    if (!hello_fn) {
+        printk("Symbol 'hello_world' not found\n");
+        llext_unload(&ext);
+        return;
+    }
+	
+    hello_fn();
+
+    // (Optional) Unload when you're done
+    llext_unload(&ext);
+}
+
 int main(void)
 {
 	int ret;
@@ -568,7 +610,9 @@ int main(void)
 	ret = bt_mgmt_adv_start(0, ext_adv_buf, ext_adv_buf_cnt, NULL, 0, true);
 	ERR_CHK(ret);
 
-	init_micropython();
+	// init_micropython();
+
+	load_and_call_hello_world();
 
 	return 0;
 }
