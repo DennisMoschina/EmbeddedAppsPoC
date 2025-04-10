@@ -77,18 +77,8 @@ add_llext_target(hello_world
     OUTPUT ${PROJECT_BINARY_DIR}/hello_world.llext 
     SOURCES src/llext_hello_world/hello_world.c
 )
-# Create an intermediate target to generate the .inc file before build starts
-# add_custom_command(
-#     OUTPUT ${PROJECT_BINARY_DIR}/hello_world_ext.inc
-#     COMMAND xxd -i -n hello_world_llext ${PROJECT_BINARY_DIR}/hello_world.llext | sed 's/^unsigned char /const unsigned char /' > ${PROJECT_BINARY_DIR}/hello_world_ext.inc
-#     DEPENDS hello_world
-#     COMMENT "Generating hello_world_ext.inc with clean symbol name"
-# )
-# add_custom_target(hello_world_blob_inc
-#     DEPENDS ${PROJECT_BINARY_DIR}/hello_world_ext.inc
-# )
 
-# add_dependencies(app hello_world_blob_inc)
+add_dependencies(app hello_world)
 
 # target_include_directories(app PRIVATE ${PROJECT_BINARY_DIR})
 
