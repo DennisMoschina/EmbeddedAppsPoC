@@ -26,8 +26,10 @@
 #include "fw_info_app.h"
 
 // #include "microPython.h"
+#include "zephyr/llext/fs_loader.h"
+#include "zephyr/fs/fs.h"
+#include "zephyr/storage/disk_access.h"
 #include "zephyr/llext/buf_loader.h"
-#include "hello_world_ext.inc"  // defines: unsigned char hello_world_llext[]; unsigned int hello_world_llext_len;
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, CONFIG_MAIN_LOG_LEVEL);
@@ -515,20 +517,48 @@ void streamctrl_send(void const *const data, size_t size, uint8_t num_ch)
 	}
 }
 
-void load_and_call_hello_world(void) {
+static void mount_sd_and_load_llext(void)
+{
+    // struct fs_mount_t sd_mount = {
+    //     .type = FS_FATFS,
+    //     .mnt_point = "/SD:",
+    //     .fs_data = NULL,
+    //     .storage_dev = (void *)"SD",
+    // };
+
+    // int ret = disk_access_init("SD");
+    // if (ret) {
+    //     LOG_ERR("SD init failed: %d\n", ret);
+    //     return;
+    // }
+
+    // if (!is_sd_mounted("/SD:")) {
+	// 	ret = fs_mount(&sd_mount);
+	// 	if (ret < 0) {
+	// 		LOG_ERR("Failed to mount SD card: %d\n", ret);
+	// 		return;
+	// 	}
+	// 	LOG_INF("Mounted SD card at /SD:\n");
+	// } else {
+	// 	LOG_INF("SD card already mounted at /SD:\n");
+	// }
+
+    // LOG_INF("SD card mounted at /SD:\n");
+
     struct llext *ext;
-    const struct llext_symbol *sym;
     void (*hello_fn)(void);
 
     // Use buffer loader to read from embedded array
-    struct llext_buf_loader loader = LLEXT_BUF_LOADER(
-        hello_world_llext, hello_world_llext_len
-    );
+    struct llext_fs_loader loader = LLEXT_FS_LOADER(
+		"/SD:/hello_world.llext"
+	);
+
+	LOG_DBG("Loading LLEXT from SD");
 
     // Load extension from memory
     int ret = llext_load(&loader.loader, "hello_world", &ext, NULL);
     if (ret != 0) {
-        printk("Failed to load extension: %d\n", ret);
+        LOG_ERR("Failed to load LLEXT from SD: %d\n", ret);
         return;
     }
 
@@ -610,9 +640,7 @@ int main(void)
 	ret = bt_mgmt_adv_start(0, ext_adv_buf, ext_adv_buf_cnt, NULL, 0, true);
 	ERR_CHK(ret);
 
-	// init_micropython();
-
-	load_and_call_hello_world();
+    mount_sd_and_load_llext();
 
 	return 0;
 }
