@@ -47,6 +47,11 @@ class Channel(Enum):
     right = 1
     NA = auto()
 
+class Transport(str, Enum):
+    """Transport type"""
+    broadcast = "broadcast"
+    unicast = "unicast"
+
 
 @dataclass
 class DeviceConf:
@@ -100,4 +105,3 @@ class BuildConf:
     device: AudioDevice
     build: BuildType
     pristine: bool
-    child_image: bool
