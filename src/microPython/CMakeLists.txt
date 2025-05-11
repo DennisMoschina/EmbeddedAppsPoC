@@ -29,6 +29,11 @@ set(MICROPY_TARGET      micropython)
 include(${MICROPY_DIR}/py/py.cmake)
 include(${MICROPY_DIR}/extmod/extmod.cmake)
 
+if (CONFIG_MICROPY_FROZEN_MODULES)
+    cmake_path(ABSOLUTE_PATH CONFIG_MICROPY_FROZEN_MANIFEST BASE_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
+    set(MICROPY_FROZEN_MANIFEST ${CONFIG_MICROPY_FROZEN_MANIFEST})
+endif()
+
 set(MICROPY_SOURCE_PORT
     microPython.c
     help.c
@@ -111,12 +116,14 @@ zephyr_library_compile_definitions(
 zephyr_library_sources(${MICROPY_SOURCE_QSTR})
 zephyr_library_link_libraries(kernel)
 
-add_dependencies(${MICROPY_TARGET} zephyr_generated_headers)
-
 include(${MICROPY_DIR}/py/mkrules.cmake)
+
+add_dependencies(BUILD_VERSION_HEADER zephyr_generated_headers)
+add_dependencies(${MICROPY_TARGET} zephyr_generated_headers)
 
 target_sources(app PRIVATE
     src/zephyr_getchar.c
+    src/usbd.c
 )
 
 target_link_libraries(app PRIVATE ${MICROPY_TARGET})
