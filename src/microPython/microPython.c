@@ -1,8 +1,46 @@
-#include "microPython.h"
+/*
+ * This file is part of the MicroPython project, http://micropython.org/
+ *
+ * The MIT License (MIT)
+ *
+ * Copyright (c) 2013, 2014 Damien P. George
+ * Copyright (c) 2016-2017 Linaro Limited
+ * Copyright (c) 2020 NXP
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
-#define MP_HEAP_SIZE 4096
+#include <zephyr/kernel.h>
+#include <zephyr/version.h>
+#ifdef CONFIG_NETWORKING
+#include <zephyr/net/net_context.h>
+#endif
 
-#include <zephyr/logging/log.h>
+#ifdef CONFIG_USB_DEVICE_STACK
+#include <zephyr/usb/usb_device.h>
+#endif
+
+#include <zephyr/storage/flash_map.h>
+
 #include "py/mperrno.h"
 #include "py/builtin.h"
 #include "py/compile.h"
@@ -16,21 +54,49 @@
 #include "shared/readline/readline.h"
 #include "extmod/modbluetooth.h"
 
-#include "src/zephyr_getchar.h"
-
-#include "modzephyr.h"
-
-#if MICROPY_PY_MACHINE
-#include "modmachine.h"
-#endif
-
 #if MICROPY_VFS
 #include "extmod/vfs.h"
 #endif
 
+#include "modmachine.h"
+#include "modzephyr.h"
+
+#include "zephyr/logging/log.h"
+
 LOG_MODULE_REGISTER(microPython, CONFIG_MAIN_LOG_LEVEL);
 
 static char heap[MICROPY_HEAP_SIZE];
+
+#if defined(CONFIG_USB_DEVICE_STACK_NEXT)
+extern int mp_usbd_init(void);
+#endif // defined(CONFIG_USB_DEVICE_STACK_NEXT)
+
+void init_zephyr(void) {
+    // We now rely on CONFIG_NET_APP_SETTINGS to set up bootstrap
+    // network addresses.
+    #if 0
+    #ifdef CONFIG_NETWORKING
+    if (net_if_get_default() == NULL) {
+        // If there's no default networking interface,
+        // there's nothing to configure.
+        return;
+    }
+    #endif
+    #ifdef CONFIG_NET_IPV4
+    static struct in_addr in4addr_my = {{{192, 0, 2, 1}}};
+    net_if_ipv4_addr_add(net_if_get_default(), &in4addr_my, NET_ADDR_MANUAL, 0);
+    static struct in_addr in4netmask_my = {{{255, 255, 255, 0}}};
+    net_if_ipv4_set_netmask(net_if_get_default(), &in4netmask_my);
+    static struct in_addr in4gw_my = {{{192, 0, 2, 2}}};
+    net_if_ipv4_set_gw(net_if_get_default(), &in4gw_my);
+    #endif
+    #ifdef CONFIG_NET_IPV6
+    // 2001:db8::1
+    static struct in6_addr in6addr_my = {{{0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}}};
+    net_if_ipv6_addr_add(net_if_get_default(), &in6addr_my, NET_ADDR_MANUAL, 0);
+    #endif
+    #endif
+}
 
 #if MICROPY_VFS
 static void vfs_init(void) {
@@ -40,7 +106,11 @@ static void vfs_init(void) {
     int ret = 0;
 
     #ifdef CONFIG_DISK_DRIVER_SDMMC
+    #if KERNEL_VERSION_NUMBER >= ZEPHYR_VERSION(4, 0, 0)
+    mp_obj_t args[] = { mp_obj_new_str_from_cstr(DT_PROP(DT_INST(0, zephyr_sdmmc_disk), disk_name)) };
+    #else
     mp_obj_t args[] = { mp_obj_new_str_from_cstr(CONFIG_SDMMC_VOLUME_NAME) };
+    #endif
     bdev = MP_OBJ_TYPE_GET_SLOT(&zephyr_disk_access_type, make_new)(&zephyr_disk_access_type, ARRAY_SIZE(args), 0, args);
     mount_point_str = "/sd";
     #elif defined(CONFIG_FLASH_MAP) && FIXED_PARTITION_EXISTS(storage_partition)
@@ -79,6 +149,7 @@ int real_main(void) {
     mp_thread_init((void *)z_thread->stack_info.start, z_thread->stack_info.size / sizeof(uintptr_t));
     #endif
 
+    init_zephyr();
     mp_hal_init();
 
 soft_reset:
@@ -92,6 +163,10 @@ soft_reset:
 
     #ifdef CONFIG_USB_DEVICE_STACK
     usb_enable(NULL);
+    #endif
+
+    #ifdef CONFIG_USB_DEVICE_STACK_NEXT
+    mp_usbd_init();
     #endif
 
     #if MICROPY_VFS
